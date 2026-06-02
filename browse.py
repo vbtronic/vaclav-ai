@@ -226,7 +226,7 @@ def llm_summarize(title, chunks):
 
 HEADERS = {"User-Agent": "VaclavBrowser/2.0 (RAG; educational)"}
 
-def fetch(url, db):
+def fetch(url, db, skip_prompt=False):
     # Cache: pokud stranka je v DB a neni stara > 1h, pouzij ji
     cached = db.execute(
         "SELECT url, title FROM pages WHERE url=? AND fetched_at > datetime('now','-1 hour')",
@@ -259,6 +259,8 @@ def fetch(url, db):
 
     safe, warn = safety_check(url, text, db)
     if not safe:
+        if skip_prompt:
+            return None
         console.print(f"[bold red]VAROVANI: {warn}[/bold red]")
         if Prompt.ask("Presto otevrit?", choices=["ano","ne"], default="ne") != "ano":
             return None
