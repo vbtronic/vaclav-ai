@@ -42,10 +42,13 @@ def get_db():
         );
         CREATE TABLE IF NOT EXISTS chunks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            url TEXT NOT NULL, chunk_index INTEGER NOT NULL, text TEXT NOT NULL
+            url TEXT NOT NULL, chunk_index INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            topic TEXT DEFAULT '',
+            keywords TEXT DEFAULT ''
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
-            USING fts5(text, url UNINDEXED, chunk_id UNINDEXED);
+            USING fts5(text, topic, keywords, url UNINDEXED, chunk_id UNINDEXED);
         CREATE TABLE IF NOT EXISTS history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             url TEXT, title TEXT, visited_at TEXT
@@ -57,35 +60,77 @@ def get_db():
     db.commit()
     return db
 
+def extract_topic_keywords(chunk_text):
+    """LLM přiřadí téma a klíčová slova každému chunku."""
+    reply = llm([
+        {"role": "system", "content":
+            "Jsi klasifikator textu. Odpovez POUZE ve formatu:\n"
+            "TEMA: <jedno slovo cesky, napr: technologie/politika/veda/sport/kultura/ekonomika/zdravi/vzdelavani/ostatni>\n"
+            "KLICOVA SLOVA: <3-5 slov oddelených carkou>"},
+        {"role": "user", "content": chunk_text[:500]},
+    ], max_tokens=60)
+    topic, keywords = "ostatni", ""
+    for line in reply.splitlines():
+        if line.startswith("TEMA:"):
+            topic = line.split(":", 1)[1].strip().lower()
+        elif line.startswith("KLICOVA SLOVA:"):
+            keywords = line.split(":", 1)[1].strip().lower()
+    return topic, keywords
+
 def index_page(db, url, title, chunks):
     db.execute("DELETE FROM chunks WHERE url=?", (url,))
     db.execute("DELETE FROM chunks_fts WHERE url=?", (url,))
     for i, chunk in enumerate(chunks):
+        topic, keywords = extract_topic_keywords(chunk)
         cur = db.execute(
-            "INSERT INTO chunks (url, chunk_index, text) VALUES (?,?,?)", (url, i, chunk)
+            "INSERT INTO chunks (url, chunk_index, text, topic, keywords) VALUES (?,?,?,?,?)",
+            (url, i, chunk, topic, keywords)
         )
         db.execute(
-            "INSERT INTO chunks_fts (text, url, chunk_id) VALUES (?,?,?)",
-            (chunk, url, cur.lastrowid)
+            "INSERT INTO chunks_fts (text, topic, keywords, url, chunk_id) VALUES (?,?,?,?,?)",
+            (chunk, topic, keywords, url, cur.lastrowid)
         )
     db.commit()
 
-def fts_search(db, query, limit=TOP_K):
+def fts_search(db, query, limit=15):
+    """Stupen 1: FTS5 broad search — vraci vic chunku nez potrebujeme."""
     safe_q = re.sub(r"[^\w\s]", " ", query).strip()
     if not safe_q:
         return []
     try:
         rows = db.execute("""
-            SELECT c.text, c.url, p.title
+            SELECT c.text, c.url, p.title, c.topic, c.keywords
             FROM chunks_fts f
             JOIN chunks c ON c.id = f.chunk_id
             JOIN pages  p ON p.url = c.url
             WHERE chunks_fts MATCH ?
             ORDER BY rank LIMIT ?
         """, (safe_q, limit)).fetchall()
-        return [{"text": r[0], "url": r[1], "title": r[2]} for r in rows]
+        return [{"text": r[0], "url": r[1], "title": r[2],
+                 "topic": r[3], "keywords": r[4]} for r in rows]
     except Exception:
         return []
+
+def llm_rerank(question, candidates):
+    """Stupen 2: LLM ohodnoti relevanci kazdeho chunku (1-10) a vrati top 5."""
+    if not candidates:
+        return []
+    numbered = "\n\n".join(
+        f"[{i+1}] TEMA:{c['topic']} | KLICE:{c['keywords']}\n{c['text'][:300]}"
+        for i, c in enumerate(candidates)
+    )
+    reply = llm([
+        {"role": "system", "content":
+            "Jsi ranker relevance. Pro dotaz ohodnot kazdy text 1-10 (10=nejrelevantnějsi). "
+            "Odpovez POUZE cisly oddelenymi carkou, napr: 8,3,9,2,7,1,6,4,10,5"},
+        {"role": "user", "content": f"Dotaz: {question}\n\nTexty:\n{numbered}"},
+    ], max_tokens=40)
+    try:
+        scores = [int(x.strip()) for x in reply.split(",") if x.strip().isdigit()]
+        ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
+        return [c for _, c in ranked[:TOP_K]]
+    except Exception:
+        return candidates[:TOP_K]
 
 # ── Chunking ──────────────────────────────────────────────────────────────────
 
@@ -121,23 +166,33 @@ def llm(messages, max_tokens=512):
 
 def rag_answer(question, db, current_url=None):
     """
-    Klicova funkce RAG:
-    1. FTS5 najde nejrelevantnější chunky ze vsech stranck v DB
-    2. LLM dostane jen tyto chunky jako kontext
-    3. Odpovida pouze z toho, co je v DB — zadne halucinace
+    Dvoustupnovy RAG:
+    1. FTS5 broad search (top 15) — tema + klicova slova v indexu
+    2. LLM re-rank — ohodnoti relevanci, vybere top 5
+    3. LLM assembly — odpovida pouze z vybranych chunku
     """
-    chunks = fts_search(db, question)
+    candidates = fts_search(db, question, limit=15)
 
-    # Doplnit chunky z aktualni stranky pokud jich je malo
-    if current_url and len(chunks) < TOP_K:
+    # Pridat chunky z aktualni stranky pokud FTS nenasel nic
+    if current_url and len(candidates) < 3:
         extra = db.execute(
-            "SELECT text FROM chunks WHERE url=? LIMIT ?",
-            (current_url, TOP_K - len(chunks))
+            "SELECT text, topic, keywords FROM chunks WHERE url=? LIMIT 10",
+            (current_url,)
         ).fetchall()
-        existing = {c["text"] for c in chunks}
-        for (t,) in extra:
+        existing = {c["text"] for c in candidates}
+        for (t, topic, kw) in extra:
             if t not in existing:
-                chunks.append({"text": t, "url": current_url, "title": ""})
+                candidates.append({"text": t, "url": current_url,
+                                   "title": "", "topic": topic, "keywords": kw})
+
+    if not candidates:
+        return llm([
+            {"role": "system", "content": "Jsi Vaclav, cesky AI asistent."},
+            {"role": "user", "content": question},
+        ])
+
+    # Stupen 2: rerank
+    chunks = llm_rerank(question, candidates)
 
     if not chunks:
         # Zadne stranky v DB — LLM odpovida ze sve znalosti
@@ -146,15 +201,18 @@ def rag_answer(question, db, current_url=None):
             {"role": "user",   "content": question},
         ])
 
+    # Stupen 3: assembly — LLM sklada odpoved z reranknutych chunku
     context = "\n\n---\n\n".join(
-        f"[{c['title'] or c['url']}]\n{c['text']}" for c in chunks
+        f"[TEMA: {c.get('topic','?')} | ZDROJ: {c['title'] or c['url']}]\n{c['text']}"
+        for c in chunks
     )
     return llm([
         {"role": "system", "content":
             "Jsi Vaclav. Odpovidas POUZE na zaklade poskytnutych zdrojovych textu. "
-            "Kdyz informace neni ve zdrojich, rikej to. Odpovidas cesky, strukturovane."},
+            "Pokud informace neni ve zdrojich, rikej 'Tuto informaci v navstivených strankach nemam.' "
+            "Odpovidas cesky, strukturovane, s nadpisy a odrazkami."},
         {"role": "user", "content":
-            f"Zdrojove texty z navstivenych stranek:\n\n{context}\n\n---\n\nOtazka: {question}"},
+            f"Vybrané relevantni zdroje (serazene podle relevance):\n\n{context}\n\n---\n\nOtazka: {question}"},
     ], max_tokens=700)
 
 def llm_summarize(title, chunks):
