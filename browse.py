@@ -291,7 +291,10 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else Prompt.ask("\n[cyan]>[/cyan]")
 
     while True:
-        cmd = cmd.strip()
+        # Normalizuj URL — odsekni <>, pridej https:// pokud chybi
+        cmd = cmd.strip().strip("<>")
+        if re.match(r"^[\w.-]+\.\w{2,}(/.*)?$", cmd) and not cmd.startswith("http"):
+            cmd = "https://" + cmd
 
         if cmd in ("quit", "exit", "q"):
             console.print("[dim]Na shledanou.[/dim]")
