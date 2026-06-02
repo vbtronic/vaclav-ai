@@ -1,0 +1,10 @@
+@import "tailwindcss";
+:root { --background: #0d0d0f; --foreground: #e8e8ed; }
+@theme inline { --color-background: var(--background); --color-foreground: var(--foreground); --font-sans: var(--font-geist-sans); --font-mono: var(--font-geist-mono); }
+body { background: var(--background); color: var(--foreground); }
+.prose-chat p { margin: 0.35em 0; }
+.prose-chat ul { margin: 0.4em 0 0.4em 1.4em; list-style: disc; }
+.prose-chat ol { margin: 0.4em 0 0.4em 1.4em; list-style: decimal; }
+.prose-chat strong { font-weight: 650; }
+.prose-chat code { background: rgba(255,255,255,0.08); padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.88em; }
+.prose-chat h1,.prose-chat h2,.prose-chat h3 { font-weight: 700; margin: 0.7em 0 0.2em; }
