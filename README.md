@@ -26,7 +26,7 @@ Kombinace starých chatbotů (keyword DB, pattern matching) + moderní LLM = ryc
 mlx_lm.server --model ./models/fused --port 8080
 
 # 2. Spustit browser
-python3 browse.py https://mensagymnazium.cz
+python3 browse.py https://wikipedia.org
 ```
 
 ## Příkazy
