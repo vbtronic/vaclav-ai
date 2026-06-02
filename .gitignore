@@ -1,0 +1,11 @@
+browser.db
+*.log
+__pycache__/
+*.pyc
+.env
+models/
+fused/
+adapters/
+*.safetensors
+node_modules/
+.next/
