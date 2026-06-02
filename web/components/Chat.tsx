@@ -98,7 +98,7 @@ export default function Chat() {
     <div className="flex flex-col h-screen">
       <header className="flex items-center gap-3 px-5 py-3 border-b border-white/8 bg-[#111114]">
         <div className="w-8 h-8 rounded-full bg-violet-600 flex items-center justify-center text-sm font-bold select-none">V</div>
-        <div><p className="text-sm font-semibold text-white leading-tight">Václav</p><p className="text-xs text-gray-500">Qwen3-4B fine-tuned · lokální</p></div>
+        <div><p className="text-sm font-semibold text-white leading-tight">Václav</p><p className="text-xs text-gray-500">Qwen3-4B · lokální</p></div>
         <button onClick={() => { localStorage.removeItem(STORAGE_KEY); setMessages([{ role: "assistant", content: WELCOME }]); }}
           className="ml-auto text-xs text-gray-600 hover:text-gray-400 transition">Nová konverzace</button>
       </header>
