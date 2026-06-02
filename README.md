@@ -8,7 +8,7 @@ Terminálový prohlížeč s lokálním LLM, SQLite RAG databází a bezpečnost
 URL → bezpečnostní check → fetch + BeautifulSoup
     → chunky textu → SQLite FTS5 (full-text search)
     → otázka → FTS najde relevantnější chunks
-    → LLM (Qwen3-4B fine-tuned) složí odpověď z kontextu
+    → LLM (Qwen3-4B base) složí odpověď z kontextu
 ```
 
 Kombinace starých chatbotů (keyword DB, pattern matching) + moderní LLM = rychlé, lokální, bez halucinací.
@@ -22,8 +22,8 @@ Kombinace starých chatbotů (keyword DB, pattern matching) + moderní LLM = ryc
 ## Spuštění
 
 ```bash
-# 1. Spustit model server (po fine-tuningu)
-mlx_lm.server --model ./models/fused --port 8080
+# 1. Spustit model server
+bash scripts/start_server.sh
 
 # 2. Spustit browser
 python3 browse.py https://wikipedia.org
